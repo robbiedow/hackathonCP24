@@ -1,5 +1,6 @@
 from dotenv import load_dotenv
 import os
+import time
 
 load_dotenv()
 api_key = os.getenv("OPENAI_API_KEY")
@@ -12,6 +13,20 @@ import re
 from langchain import PromptTemplate, LLMChain
 from langchain.chat_models import ChatOpenAI
 from langchain.callbacks import get_openai_callback  # Import the callback handler
+
+
+# Helper function to extract final classifications from nested data structures
+def get_final_classifications(data):
+    final_classifications = []
+    if isinstance(data, dict):
+        for value in data.values():
+            final_classifications.extend(get_final_classifications(value))
+    elif isinstance(data, list):
+        for item in data:
+            final_classifications.extend(get_final_classifications(item))
+    else:
+        final_classifications.append(data)
+    return final_classifications
 
 
 class ReviewClassifier:
@@ -29,14 +44,35 @@ class ReviewClassifier:
         # Classification steps
         # 1. Classify into Subject Level 1
         sl1_list = self.classify_sl1(review_text)
+        # Print SL1 classifications
+        print(f"SL1: {sl1_list}")
+
         # 2. Classify into Subject Level 2
         sl2_dict = self.classify_sl2(review_text, sl1_list)
+        # Print SL2 classifications
+        sl2_final = get_final_classifications(sl2_dict)
+        print(f"SL2: {sl2_final}")
+
         # 3. Classify into Subject Level 3
         sl3_dict = self.classify_sl3(review_text, sl1_list, sl2_dict)
+        # Print SL3 classifications
+        sl3_final = get_final_classifications(sl3_dict)
+        print(f"SL3: {sl3_final}")
+
         # 4. Assign codes (Subject 4)
         subject4_list = self.assign_codes(review_text, sl1_list, sl2_dict, sl3_dict)
 
-        return subject4_list
+        # 5. Extract Prior Product
+        prior_product = self.extract_prior_product(review_text)
+        # Print Prior Product
+        print(f"Prior Product: {prior_product}")
+
+        # 6. Determine Buy Again
+        buy_again = self.determine_buy_again(review_text)
+        # Print Buy Again
+        print(f"Buy Again: {buy_again}")
+
+        return subject4_list, prior_product, buy_again
 
     def classify_sl1(self, review_text):
         sl1_options = list(self.hierarchy.keys())
@@ -45,7 +81,7 @@ class ReviewClassifier:
         prompt_template = PromptTemplate(
             input_variables=["review", "options"],
             template="""
-Given the following Amazon review:
+Consider the following Amazon review:
 "{review}"
 
 Please classify this review into one or more of the following Subject Level 1 categories. Provide your answer as a list of strings containing the exact category labels from the options below.
@@ -69,8 +105,6 @@ Example output: ["Subject Level 1: 100 COMPLAINT: Any comment expressing dissati
             self.prompt_tokens += cb.prompt_tokens
             self.completion_tokens += cb.completion_tokens
 
-            print("!!!! 1")
-            print(response)
             # Validate response
             try:
                 sl1_list = ast.literal_eval(response)
@@ -82,10 +116,12 @@ Example output: ["Subject Level 1: 100 COMPLAINT: Any comment expressing dissati
                     return sl1_list
                 else:
                     print(
-                        f"Invalid SL1 classification. Retrying... Attempt {attempt+1}"
+                        f"Retrying SL1 classification (Attempt {attempt+1}/{self.max_retries})"
                     )
             except (ValueError, SyntaxError):
-                print(f"Failed to parse SL1 response. Retrying... Attempt {attempt+1}")
+                print(
+                    f"Retrying SL1 classification (Attempt {attempt+1}/{self.max_retries})"
+                )
 
         raise ValueError("Failed to classify Subject Level 1 after maximum retries")
 
@@ -100,7 +136,7 @@ Example output: ["Subject Level 1: 100 COMPLAINT: Any comment expressing dissati
             prompt_template = PromptTemplate(
                 input_variables=["review", "options"],
                 template="""
-Given the following Amazon review:
+Consider the following Amazon review:
 "{review}"
 
 Please classify this review into one or more of the following Subject Level 2 categories. Provide your answer as a list of strings containing the EXACT classification labels from the options below.
@@ -124,8 +160,7 @@ Your response MUST be a Python list of strings, containing one or more of the op
                 self.prompt_tokens += cb.prompt_tokens
                 self.completion_tokens += cb.completion_tokens
 
-                print("!!!! 2 ")
-                print(response)
+                # Validate response
                 try:
                     sl2_list = ast.literal_eval(response)
                     valid = all(
@@ -136,11 +171,11 @@ Your response MUST be a Python list of strings, containing one or more of the op
                         break
                     else:
                         print(
-                            f"Invalid SL2 classification for {sl1}. Retrying... Attempt {attempt+1}"
+                            f"Retrying SL2 classification for {sl1} (Attempt {attempt+1}/{self.max_retries})"
                         )
                 except (ValueError, SyntaxError):
                     print(
-                        f"Failed to parse SL2 response for {sl1}. Retrying... Attempt {attempt+1}"
+                        f"Retrying SL2 classification for {sl1} (Attempt {attempt+1}/{self.max_retries})"
                     )
             else:
                 raise ValueError(
@@ -176,10 +211,10 @@ Your response MUST be a Python list of strings, containing one or more of the op
                 prompt_template = PromptTemplate(
                     input_variables=["review", "options"],
                     template="""
-    Given the following Amazon review:
+    Consider the following Amazon review:
     "{review}"
 
-    Please classify this review into one or more of the following Subject Level 3 categories. Provide your answer as a list of strings containing the EXACT category labels from the options below.
+    Please classify this review into one or more of the following Subject Level 3 categories. Provide your answer as a list of strings containing the EXACT labels from the options below.
 
     Options:
     {options}
@@ -200,8 +235,7 @@ Your response MUST be a Python list of strings, containing one or more of the op
                     self.prompt_tokens += cb.prompt_tokens
                     self.completion_tokens += cb.completion_tokens
 
-                    print("!!!! 3")
-                    print(response)
+                    # Validate response
                     try:
                         sl3_list = ast.literal_eval(response)
                         valid = True
@@ -233,11 +267,11 @@ Your response MUST be a Python list of strings, containing one or more of the op
                             break
                         else:
                             print(
-                                f"Invalid SL3 classification. Retrying... Attempt {attempt+1}"
+                                f"Retrying SL3 classification for {sl1} > {sl2} (Attempt {attempt+1}/{self.max_retries})"
                             )
                     except (ValueError, SyntaxError):
                         print(
-                            f"Failed to parse SL3 response. Retrying... Attempt {attempt+1}"
+                            f"Retrying SL3 classification for {sl1} > {sl2} (Attempt {attempt+1}/{self.max_retries})"
                         )
                 else:
                     raise ValueError(
@@ -281,7 +315,7 @@ Your response MUST be a Python list of strings, containing one or more of the op
                     prompt_template = PromptTemplate(
                         input_variables=["review", "options"],
                         template="""
-Given the following Amazon review:
+Consider the following Amazon review:
 "{review}"
 
 Please label the review according to the appropriate classifications from the following options. You may select multiple options if applicable. 
@@ -307,8 +341,7 @@ Example Output: ["51304 - Praise Issue Other No Religious Certification", "51312
                         self.prompt_tokens += cb.prompt_tokens
                         self.completion_tokens += cb.completion_tokens
 
-                        print("!!!! 4")
-                        print(response)
+                        # Validate response
                         try:
                             code_list = ast.literal_eval(response)
                             valid = True
@@ -336,11 +369,11 @@ Example Output: ["51304 - Praise Issue Other No Religious Certification", "51312
                                 break
                             else:
                                 print(
-                                    f"Invalid code assignment. Retrying... Attempt {attempt+1}"
+                                    f"Retrying code assignment (Attempt {attempt+1}/{self.max_retries})"
                                 )
                         except (ValueError, SyntaxError):
                             print(
-                                f"Failed to parse code assignment response. Retrying... Attempt {attempt+1}"
+                                f"Retrying code assignment (Attempt {attempt+1}/{self.max_retries})"
                             )
                     else:
                         raise ValueError(
@@ -348,8 +381,91 @@ Example Output: ["51304 - Praise Issue Other No Religious Certification", "51312
                         )
         return subject4_results
 
+    def extract_prior_product(self, review_text):
+        prompt_template = PromptTemplate(
+            input_variables=["review"],
+            template="""
+Consider the following Amazon review:
+"{review}"
+
+Determine if the consumer mentions a prior product they used before this one. If so, extract the brand and form (e.g., toothpaste, soap) mentioned by the consumer. Provide your answer as a string containing the brand and form. If no prior product is mentioned, return an empty string.
+
+Your response MUST be a single string. Do not provide any additional text or explanations.
+
+Example Outputs:
+- "Crest toothpaste"
+- "Dove soap"
+- ""
+""",
+        )
+
+        chain = LLMChain(prompt=prompt_template, llm=self.llm)
+
+        for attempt in range(self.max_retries):
+            with get_openai_callback() as cb:
+                response = chain.run(review=review_text)
+            # Accumulate token usage
+            self.total_tokens += cb.total_tokens
+            self.prompt_tokens += cb.prompt_tokens
+            self.completion_tokens += cb.completion_tokens
+
+            # Validate response
+            response = response.strip().strip('"')
+            if isinstance(response, str):
+                # The response should be a string (possibly empty)
+                return response
+            else:
+                print(
+                    f"Retrying Prior Product extraction (Attempt {attempt+1}/{self.max_retries})"
+                )
+        return ""  # Return empty string if extraction fails after retries
+
+    def determine_buy_again(self, review_text):
+        prompt_template = PromptTemplate(
+            input_variables=["review"],
+            template="""
+Consider the following Amazon review:
+"{review}"
+
+Determine if the consumer indicates whether they would purchase the product again. The possible values are:
+- "Y" (Yes) if the consumer indicates they would purchase again.
+- "N" (No) if the consumer indicates they would not purchase again.
+- "D" (Don't Know) if the consumer says they don't know if they would purchase again.
+- "" (empty string) if the consumer does not indicate.
+
+Your response MUST be one of the following single characters: "Y", "N", "D", or "" (empty string). Do not provide any additional text or explanations.
+
+Example Outputs:
+- "Y"
+- "N"
+- "D"
+- ""
+""",
+        )
+
+        chain = LLMChain(prompt=prompt_template, llm=self.llm)
+
+        for attempt in range(self.max_retries):
+            with get_openai_callback() as cb:
+                response = chain.run(review=review_text)
+            # Accumulate token usage
+            self.total_tokens += cb.total_tokens
+            self.prompt_tokens += cb.prompt_tokens
+            self.completion_tokens += cb.completion_tokens
+
+            # Validate response
+            response = response.strip().strip('"')
+            if response in ["Y", "N", "D", ""]:
+                return response
+            else:
+                print(
+                    f"Retrying Buy Again determination (Attempt {attempt+1}/{self.max_retries})"
+                )
+        return ""  # Return empty string if determination fails after retries
+
 
 def main():
+    start_time = time.time()
     # Load the hierarchy JSON
     with open("subject_hierarchy_dict.json", "r", encoding="utf-8") as f:
         hierarchy = json.load(f)
@@ -359,7 +475,6 @@ def main():
     df = pd.read_csv(input_csv)
 
     # Limit to first 5 rows for testing
-    df = df.head(2)
 
     output_rows = []
 
@@ -368,11 +483,23 @@ def main():
     total_completion_tokens = 0
     total_tokens = 0
 
+    total_reviews = len(df)
+
     for idx, row in df.iterrows():
-        review_text = row["Review"]
+        review_text = f"""\
+Title: {row["Title"]}
+Description: {row["Review"]}
+
+Product Tags: Brand={row["Brand"]}, Category={row["Product 1"]}, SubCategory={row["Product 1"]}, Product Variant={row["Product 1"]}
+"""
+        print(f"\nProcessing review {idx+1} of {total_reviews}")
+        print(f"Review text:\n{review_text}")
+
         classifier = ReviewClassifier(hierarchy)
         try:
-            subject4_list = classifier.classify_review(review_text)
+            subject4_list, prior_product, buy_again = classifier.classify_review(
+                review_text
+            )
             # Accumulate tokens
             total_prompt_tokens += classifier.prompt_tokens
             total_completion_tokens += classifier.completion_tokens
@@ -381,10 +508,16 @@ def main():
             if not subject4_list:
                 # No codes assigned
                 continue
+
+            # Print assigned subject codes
+            print(f"Assigned Subject Codes: {subject4_list}")
+
             # For each code assigned, create a new row
             for subject4 in subject4_list:
                 new_row = row.copy()
                 new_row["Subject 4"] = subject4
+                new_row["Prior Product"] = prior_product
+                new_row["Buy Again"] = buy_again
                 output_rows.append(new_row)
         except ValueError as e:
             print(f"Failed to classify review at index {idx}: {e}")
@@ -394,16 +527,24 @@ def main():
     if output_rows:
         output_df = pd.DataFrame(output_rows)
         # Save to CSV
-        output_csv = "output_classified_reviews.csv"  # Replace with your desired output file name
+        output_csv = "output12312.csv"  # Replace with your desired output file name
         output_df.to_csv(output_csv, index=False)
         print(f"Output saved to {output_csv}")
     else:
         print("No classifications were made.")
 
-    # Print total token usage
     print(f"Total input tokens (prompt tokens): {total_prompt_tokens}")
     print(f"Total output tokens (completion tokens): {total_completion_tokens}")
     print(f"Total tokens used: {total_tokens}")
+
+    # Print total token usage
+    end_time = time.time()
+    elapsed_time = end_time - start_time
+    minutes, seconds = divmod(elapsed_time, 60)
+    average_time_per_review = elapsed_time / total_reviews
+
+    print(f"Total time taken: {int(minutes)} minutes and {seconds:.2f} seconds")
+    print(f"Average time per review: {average_time_per_review:.2f} seconds")
 
 
 if __name__ == "__main__":
