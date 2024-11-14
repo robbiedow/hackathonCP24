@@ -123,6 +123,9 @@ Colgate's Consumer Affairs team manually categorizes Amazon reviews by selecting
 See below the diagram and link to presentation:
 
 [Link to Google Presentation](https://docs.google.com/presentation/d/1oovPFnnWt9CG-dqLZGWUfwsTH-d3YWMmam4fkuFFd0A/edit?usp=sharing)
-Diagram
+
+
+Diagram showing core process for extracting insights
+
 ![Screenshot 2024-11-14 at 4 06 11 PM](https://github.com/user-attachments/assets/bdc42333-e4a9-494d-b191-7babd6873084)
 
