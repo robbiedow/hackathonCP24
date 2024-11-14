@@ -117,7 +117,6 @@ Colgate's Consumer Affairs team manually categorizes Amazon reviews by selecting
 - Implement batch processing to optimize API usage.
 - Incorporate alternative models for cost efficiency.
 - Add multilingual support for reviews in different languages.
-- Add code to remove duplicates
 
 ## More Info
 
